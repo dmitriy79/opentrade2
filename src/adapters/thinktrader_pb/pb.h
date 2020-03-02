@@ -20,6 +20,7 @@ class PB : public opentrade::ExchangeConnectivityAdapter {
     int qty;
     std::string mode;
     std::string symbol;
+    std::string channel;
   };
   std::unordered_map<int64_t, Order> orders_;
   std::unordered_set<int64_t> pending_cancels_;
@@ -27,7 +28,7 @@ class PB : public opentrade::ExchangeConnectivityAdapter {
   std::unordered_map<int64_t, std::string> status_;
   int interval_ = 1000;  // ms
   std::string dir_;
-  std::string channel_;
+  int channels_ = 1;
 };
 
 #endif  // ADAPTERS_THINKTRADER_PB_PB_H_

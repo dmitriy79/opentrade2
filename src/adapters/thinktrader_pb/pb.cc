@@ -12,9 +12,9 @@ void PB::Start() noexcept {
   if (dir_.empty()) {
     LOG_FATAL(name() << ": dir not given");
   }
-  channel_ = config("channel");
-  if (channel_.empty()) {
-    LOG_FATAL(name() << ": channel not given");
+  auto channels = config("channels");
+  if (!channels.empty()) {
+    channels_ = std::max(channels_, atoi(channels.c_str()));
   }
   auto interval = config("interval");
   if (!interval.empty()) {
@@ -170,26 +170,46 @@ inline void PB::LoopAction() {
     return;
   }
   if (pending_cancels_.empty() && orders_.empty()) return;
-  static const std::string kStore =
-      (opentrade::kStorePath / "command.h").string();
-  std::ofstream of(kStore.c_str());
-  for (auto& pair : orders_) {
-    of << pair.second.mode << ',' << channel_ << ',' << pair.second.px << ','
-       << pair.second.symbol << ',' << pair.second.qty << "\r\n";
-    of << "orderparam=<tag>note=" << pair.first << "</tag>\r\n";
+
+  for (auto i = 1; i <= channels_; ++i) {
+    auto cmd_file = dir_ + "/command_" + std::to_string(i) + ".csv";
+    if (std::ifstream(cmd_file.c_str()).good()) {
+      LOG_ERROR(name() << ": " + cmd_file << " exists");
+      return;
+    }
   }
+
+  static thread_local std::vector<int64_t> kPendingCancelCmds;
+  kPendingCancelCmds.clear();
   for (auto it = pending_cancels_.begin(); it != pending_cancels_.end();) {
     auto it2 = kTag2Cmd.find(*it);
     if (it2 == kTag2Cmd.end()) {
       ++it;
       continue;
     }
+    kPendingCancelCmds.push_back(it2->second);
     it = pending_cancels_.erase(it);
-    of << "cancel " << it2->second << "\r\n";
   }
-  of.close();
-  if (system(("cp " + kStore + " " + kCmdFile).c_str()) == 0) {
-    // do nothing
+
+  for (auto i = 1; i <= channels_; ++i) {
+    auto cmd_file =
+        (opentrade::kStorePath / ("command_" + std::to_string(i) + ".csv"))
+            .string();
+    std::ofstream of(cmd_file.c_str());
+    for (auto& pair : orders_) {
+      if (atoi(pair.second.channel.c_str()) != i) continue;
+      of << pair.second.mode << ',' << pair.second.channel << ','
+         << pair.second.px << ',' << pair.second.symbol << ','
+         << pair.second.qty << "\r\n";
+      of << "orderparam=<tag>note=" << pair.first << "</tag>\r\n";
+    }
+    for (auto cmd : kPendingCancelCmds) {
+      of << "cancel " << cmd << "\r\n";
+    }
+    of.close();
+    if (system(("cp " + cmd_file + " " + dir_).c_str()) == 0) {
+      // do nothing
+    }
   }
   orders_.clear();  // for safety, always clear even above failed
 }
@@ -225,6 +245,8 @@ std::string PB::Place(const opentrade::Order& ord) noexcept {
   else
     exch_order.mode = "24";
   exch_order.symbol = ord.sec->symbol;
+  auto channel = ord.broker_account->GetParam("channel");
+  exch_order.channel = channel.empty() ? "1" : channel;
   tp_.AddTask([this, id, exch_order]() { orders_[id] = exch_order; });
   return {};
 }
